@@ -4,11 +4,15 @@
 
 Le fichier [patreon-oauth-login.js](patreon-oauth-login.js) est un [Cloudflare Worker](https://workers.cloudflare.com/) qui peut être déployé en continu via GitHub Actions.
 
-Ce worker fait 3 choses :
+✨ **Mis à jour le 22 mai 2025** ✨
+
+Ce worker fait 5 choses :
 
 1. Quand vous ouvrez l'URL du worker, il redirige vers la page d'authentification OAuth2 de Patreon
 2. Il accepte une requête `POST` avec le `code` OAuth récupéré après la redirection et renvoie un token d'accès en retour
-3. Il active CORS pour permettre les requêtes cross-origin
+3. Il fournit un endpoint `/identity` qui vérifie le statut de membre et d'administrateur de l'utilisateur connecté
+4. Il propose un endpoint `/proxy-image` qui contourne les restrictions CORS sur les images Patreon
+5. Il active CORS pour permettre les requêtes cross-origin depuis n'importe quel domaine
 
 Le fichier [index.html](index.html) est une démo d'une application "Connexion avec Patreon". Vous pouvez examiner son code source pour comprendre comment l'authentification est gérée côté client.
 
@@ -53,6 +57,8 @@ Vous pouvez configurer les identifiants Patreon de deux façons différentes :
 6. Ajoutez deux variables :
    - Nom : `CLIENT_ID` - Valeur : [votre client ID Patreon]
    - Nom : `CLIENT_SECRET` - Valeur : [votre client secret Patreon]
+   - Nom : `PATREON_CAMPAIGN_ID` - Valeur : [l'ID de votre campagne Patreon]
+   - Nom : `PATREON_CREATOR_ID` - Valeur : [votre ID créateur Patreon]
 7. Assurez-vous que l'option "Encrypt" est cochée pour la variable CLIENT_SECRET (pour des raisons de sécurité)
 8. Cliquez sur "Save and Deploy"
 
@@ -63,6 +69,8 @@ Vous pouvez configurer les identifiants Patreon de deux façons différentes :
 ```toml
 [vars]
 CLIENT_ID = "votre_client_id_patreon"
+PATREON_CAMPAIGN_ID = "votre_id_campagne_patreon"
+PATREON_CREATOR_ID = "votre_id_createur_patreon"
 ```
 
 2. Utilisez la commande `wrangler secret` pour ajouter votre CLIENT_SECRET (qui est sensible) :
@@ -82,7 +90,20 @@ wrangler publish
 
 Votre worker sera déployé sur une URL du type `https://patreon-oauth-login.votre-nom-utilisateur.workers.dev`
 
-### Étape 5 : Intégrer à votre site web
+### Étape 5 : Configurer l'URL de redirection
+
+Dans le fichier `patreon-oauth-login.js`, modifiez les URL de redirection qui sont actuellement configurées pour `http://localhost:8000/index.html` :
+
+```javascript
+// Remplacez cette ligne dans le code (deux occurrences)
+const redirect_uri = "http://localhost:8000/index.html";
+// Par l'URL configurée dans votre app Patreon
+const redirect_uri = "https://votre-site.com/callback";
+```
+
+> ⚠️ **Important** : Cette URL doit correspondre exactement à celle configurée dans votre application Patreon.
+
+### Étape 6 : Intégrer à votre site web
 
 Pour intégrer ce système d'authentification à votre site web :
 
@@ -91,6 +112,8 @@ Pour intégrer ce système d'authentification à votre site web :
 3. Adaptez le traitement des données utilisateur retournées par l'API Patreon
 
 ## Fonctionnement technique
+
+### Processus d'authentification OAuth2
 
 Le processus d'authentification OAuth2 avec Patreon se déroule comme suit :
 
@@ -102,14 +125,52 @@ Le processus d'authentification OAuth2 avec Patreon se déroule comme suit :
 6. Le token d'accès est renvoyé à votre site
 7. Votre site utilise ce token pour accéder aux informations de l'utilisateur via l'API Patreon
 
+### Endpoint /identity
+
+L'endpoint `/identity` fournit un accès sécurisé à l'API Patreon pour vérifier l'identité de l'utilisateur et son statut de membre :
+
+```javascript
+// Exemple d'utilisation de l'endpoint /identity
+fetch('https://votre-worker.workers.dev/identity', {
+  headers: {
+    'Authorization': 'Bearer ' + token_acces
+  }
+})
+.then(response => response.json())
+.then(data => {
+  console.log('Statut de membre:', data.membership_status);
+});
+```
+
+Le worker enrichit les données renvoyées avec un objet `membership_status` contenant :
+- `is_member` : si l'utilisateur est un membre actif de la campagne
+- `is_admin` : si l'utilisateur est le créateur/administrateur de la campagne
+- `status` : le statut détaillé (`active_paid_member`, `gift_member`, `trial_member`, etc.)
+- `membership` : les données complètes de l'adhésion
+
+### Endpoint /proxy-image
+
+L'endpoint `/proxy-image` permet de contourner les restrictions CORS sur les images hébergées par Patreon :
+
+```javascript
+// Exemple d'utilisation du proxy d'images
+const proxyUrl = 'https://votre-worker.workers.dev/proxy-image?url=' + 
+  encodeURIComponent('https://c10.patreonusercontent.com/3/eyJ3...')
+
+// Utilisation dans une balise img
+document.getElementById('avatar').src = proxyUrl;
+```
+
 ## Aller plus loin
 
 Vous pouvez améliorer ce système en :
 
-- Ajoutant des scopes supplémentaires pour accéder à plus de données utilisateur
+- Personnalisant les scopes OAuth demandés (actuellement limité à `identity`)
 - Implémentant la gestion du refresh token pour maintenir l'authentification active
 - Stockant les tokens dans un KV store de Cloudflare pour une persistance entre les sessions
+- Ajoutant plus de vérifications de sécurité (vérification de l'origine, rate limiting)
 - Créant des endpoints supplémentaires pour accéder à d'autres ressources de l'API Patreon
+- Personnalisant la logique de détection des types de membres selon vos besoins spécifiques
 
 ## Ressources utiles
 
@@ -146,12 +207,14 @@ Le processus d'authentification se déroule comme suit :
 7. Le JavaScript de votre page échange ce code contre un token d'accès via votre worker
 8. Vous pouvez maintenant utiliser ce token pour accéder aux données de l'utilisateur via l'API Patreon
 
-## Avantages de cette approche
+## Avantages de cette approche :
 
 - **Sécurité** : Votre client secret n'est jamais exposé côté client
+- **Analyse complète** : Détection intelligente des différents types de membres (payants, offerts, essai gratuit)
 - **Simplicité** : Cloudflare Workers gère toute la complexité de l'échange de tokens
 - **Performance** : Déploiement sur le réseau mondial de Cloudflare pour des temps de réponse minimaux
 - **Extensibilité** : Facile à étendre pour ajouter d'autres fonctionnalités liées à Patreon
+- **Proxy d'images** : Contourne les restrictions CORS sur les images Patreon pour une meilleure intégration
 
 Profitez de votre nouveau système d'authentification Patreon ! 🎮✨
 
