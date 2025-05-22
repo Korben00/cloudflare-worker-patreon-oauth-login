@@ -2,9 +2,11 @@ addEventListener("fetch", (event) => {
   event.respondWith(handle(event.request));
 });
 
-// Utilisation des secrets
+// Utilisation des secrets et des variables d'environnement
 const client_id = CLIENT_ID;
 const client_secret = CLIENT_SECRET;
+const patreon_campaign_id = PATREON_CAMPAIGN_ID;
+const patreon_creator_id = PATREON_CREATOR_ID;
 
 async function handle(request) {
   // Gérer la requête CORS pre-flight
@@ -30,7 +32,7 @@ async function handle(request) {
   const url = new URL(request.url);
   const path = url.pathname;
   
-  // Proxy pour l'API d'identité Patreon
+  // Proxy pour l'API d'identité Patreon avec vérification du statut de membre et d'admin
   if (path === "/identity" && request.method === "GET") {
     const token = request.headers.get("Authorization");
     if (!token) {
@@ -41,16 +43,136 @@ async function handle(request) {
     }
     
     try {
-      // Transmettre la requête à l'API Patreon avec le token
-      const response = await fetch("https://www.patreon.com/api/oauth2/v2/identity?include=memberships&fields[user]=about,created,email,full_name,image_url,url", {
-        headers: {
-          "Authorization": token,
-          "Accept": "application/json"
+      // Transmettre la requête à l'API Patreon avec le token en incluant les données de membre
+      // Requête avec inclusion des membres, des avantages, et des données de campagne
+      const response = await fetch(
+        `https://www.patreon.com/api/oauth2/v2/identity?` + 
+        `include=memberships,memberships.campaign,memberships.currently_entitled_tiers,campaign.benefits` + 
+        `&fields[user]=about,created,email,full_name,image_url,url,is_email_verified` + 
+        `&fields[member]=patron_status,is_follower,last_charge_date,last_charge_status,lifetime_support_cents,currently_entitled_amount_cents,pledge_relationship_start,campaign_lifetime_support_cents,pledge_cadence,is_free_trial,will_pay_amount_cents,next_charge_date,note,pledge_cadence,pledge_relationship_start,will_pay_amount_cents` + 
+        `&fields[campaign]=creation_name,is_monthly,one_liner,patron_count,pay_per_name,pledge_url` + 
+        `&fields[tier]=amount_cents,description,discord_role_ids,edited_at,image_url,patron_count,published,published_at,requires_shipping,title,url`, 
+        {
+          headers: {
+            "Authorization": token,
+            "Accept": "application/json"
+          }
         }
-      });
+      );
       
       const data = await response.json();
-      return new Response(JSON.stringify(data), {
+      
+      // Analyser les données pour déterminer le statut du membre
+      let isMember = false;
+      let isAdmin = false;
+      let memberStatus = "non_member";
+      let membershipData = null;
+      
+      // Vérifier si l'utilisateur est l'administrateur (créateur) de la campagne
+      if (data.data && data.data.id === patreon_creator_id) {
+        isAdmin = true;
+        memberStatus = "admin";
+      }
+      
+      // Vérifier les relations de membre
+      if (data.included) {
+        // Rechercher les adhésions correspondant à notre campagne
+        const memberships = data.included.filter(item => 
+          item.type === "member" && 
+          item.relationships && 
+          item.relationships.campaign && 
+          item.relationships.campaign.data && 
+          item.relationships.campaign.data.id === patreon_campaign_id
+        );
+        
+        if (memberships.length > 0) {
+          const membership = memberships[0];
+          membershipData = membership;
+          
+          // Vérifier si c'est un membre actif payant
+          if (membership.attributes) {
+            // Valeurs possibles: active_patron, declined_patron, former_patron
+            const patronStatus = membership.attributes.patron_status;
+            // Vérifier si c'est un membre payant ou gratuit
+            const entitledAmountCents = membership.attributes.currently_entitled_amount_cents || 0;
+            
+            // Détecter si c'est un abonnement offert (gift membership)
+            // On peut le détecter par plusieurs moyens:
+            // 1. La présence d'une note spécifique "Gift" dans le champ note
+            // 2. Le patron a un montant actuel mais ne paiera pas pour le prochain cycle (will_pay_amount_cents = 0)
+            const memberNote = membership.attributes.note || '';
+            const willPayAmountCents = membership.attributes.will_pay_amount_cents || 0;
+            const isFreeTrial = membership.attributes.is_free_trial || false;
+            
+            const isGiftMembership = 
+              (memberNote.toLowerCase().includes('gift') || 
+              (entitledAmountCents > 0 && willPayAmountCents === 0 && !isFreeTrial));
+            
+            // Indiquer si c'est un membre payant ou gratuit
+            const isPaidMember = entitledAmountCents > 0;
+            
+            // Stocker le montant dans les données de membre
+            membershipData.entitled_amount_cents = entitledAmountCents;
+            membershipData.is_paid_member = isPaidMember;
+            membershipData.is_gift_membership = isGiftMembership;
+            membershipData.will_pay_amount_cents = willPayAmountCents;
+            membershipData.is_free_trial = isFreeTrial;
+            
+            if (patronStatus === "active_patron") {
+              // Vérifier le type de membre
+              if (isPaidMember) {
+                isMember = true;
+                
+                if (isGiftMembership) {
+                  // Membre avec abonnement offert
+                  memberStatus = "gift_member";
+                } else if (isFreeTrial) {
+                  // Membre en période d'essai gratuite
+                  memberStatus = "trial_member";
+                } else {
+                  // Membre payant standard
+                  memberStatus = "active_paid_member";
+                }
+              } else {
+                // Membre actif mais gratuit
+                memberStatus = "active_free_member";
+              }
+              
+              // Ajouter les niveaux auxquels le membre a droit
+              if (membership.relationships && 
+                  membership.relationships.currently_entitled_tiers && 
+                  membership.relationships.currently_entitled_tiers.data) {
+                
+                const entitledTierIds = membership.relationships.currently_entitled_tiers.data.map(tier => tier.id);
+                
+                // Trouver les détails complets des niveaux
+                const tiers = data.included.filter(item => 
+                  item.type === "tier" && entitledTierIds.includes(item.id)
+                );
+                
+                membershipData.entitled_tiers = tiers;
+              }
+            } else if (patronStatus === "declined_patron") {
+              memberStatus = "declined_member";
+            } else if (patronStatus === "former_patron") {
+              memberStatus = "former_member";
+            }
+          }
+        }
+      }
+      
+      // Ajouter les informations de statut aux données de réponse
+      const enhancedData = {
+        ...data,
+        membership_status: {
+          is_member: isMember,
+          is_admin: isAdmin,
+          status: memberStatus,
+          membership: membershipData
+        }
+      };
+      
+      return new Response(JSON.stringify(enhancedData), {
         status: response.status,
         headers: corsHeaders
       });

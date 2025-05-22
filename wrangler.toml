@@ -8,6 +8,8 @@ compatibility_date = "2025-05-22"
 # Configuration des variables d'environnement
 [vars]
 CLIENT_ID = "QBvRQkGxZQ69NoIGaL3DWWQ_L88vJSO8qMEhhNZWML2FGDFwD8_Cis6Dg0PQ0hUp" # Remplace par ton vrai Client ID
+PATREON_CAMPAIGN_ID = "6770829"
+PATREON_CREATOR_ID = "591228"
 
 # Pour les secrets comme le CLIENT_SECRET, ne les mets pas directement ici
 # Utilise plutôt la commande wrangler secret (voir README)
