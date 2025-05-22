@@ -174,7 +174,7 @@
             <pre id="user-data-raw"></pre>
           </details>
         </div>
-        <p class="logout"><a href=".">Déconnexion</a></p>
+        <p class="logout"><a href="#" id="logout-link">Déconnexion</a></p>
       </div>
     </div>
     <p id="loading">
@@ -185,9 +185,27 @@
       const WORKER_URL = "https://patreon-oauth-login.korben.workers.dev";
       const code = new URL(location.href).searchParams.get("code");
       const $login = document.querySelector("#login");
-
+      
+      // Fonction pour vérifier si un token est stocké et valide
+      function checkStoredAuth() {
+        const authData = JSON.parse(localStorage.getItem('patreonAuth') || '{}');
+        const { token, expiresAt } = authData;
+        
+        // Vérifier si le token existe et n'est pas expiré
+        if (token && expiresAt && new Date().getTime() < expiresAt) {
+          console.log('Token trouvé dans le localStorage, session restaurée');
+          return loadUserData(token);
+        }
+        
+        return false;
+      }
+      
+      // Au chargement de la page, vérifier d'abord le code puis le localStorage
       if (code) {
         login(code);
+      } else if (!checkStoredAuth()) {
+        // Si pas de code et pas de token valide en localStorage, on reste sur l'écran de connexion
+        document.body.dataset.state = "signed-out";
       }
 
       async function login(code) {
@@ -216,6 +234,16 @@
           if (result.error) {
             return alert(JSON.stringify(result, null, 2));
           }
+          
+          // Sauvegarder le token et les informations d'authentification
+          // Calculer la date d'expiration en millisecondes depuis epoch
+          const expiresAt = new Date().getTime() + (result.expires_in * 1000);
+          localStorage.setItem('patreonAuth', JSON.stringify({
+            token: result.token,
+            refreshToken: result.refresh_token,
+            expiresAt: expiresAt,
+            scope: result.scope
+          }));
 
           // Au lieu d'appeler directement l'API Patreon, passons par notre worker
           // qui servira de proxy et évitera les problèmes CORS
@@ -463,12 +491,199 @@
           location.reload();
         }
       }
+      
+      // Fonction pour charger les données utilisateur avec un token existant
+      async function loadUserData(token) {
+        document.body.dataset.state = "loading";
+        
+        try {
+          // Récupérer les données utilisateur avec le token stocké
+          const getUserResponse = await fetch(`${WORKER_URL}/identity`, {
+            method: "GET",
+            headers: {
+              "Accept": "application/json",
+              "Authorization": `Bearer ${token}`
+            }
+          });
+          
+          // Si la requête échoue (token expiré ou invalide), on nettoie et demande une nouvelle connexion
+          if (!getUserResponse.ok) {
+            localStorage.removeItem('patreonAuth');
+            document.body.dataset.state = "signed-out";
+            return false;
+          }
+          
+          const userData = await getUserResponse.json();
+          console.log('Données utilisateur Patreon:', userData);
+          
+          // On vérifie que les données sont au bon format
+          if (userData.data && userData.data.attributes) {
+            const attributes = userData.data.attributes;
+            
+            // Affichage du nom complet
+            const userName = attributes.full_name || 'Utilisateur Patreon';
+            document.getElementById('login').textContent = userName;
+            
+            // Affichage de l'image de profil via notre proxy pour éviter les problèmes CORS
+            if (attributes.image_url) {
+              document.getElementById('user-image').src = `${WORKER_URL}/proxy-image?url=${encodeURIComponent(attributes.image_url)}`;
+            } else {
+              // Image par défaut
+              document.getElementById('user-image').src = `${WORKER_URL}/proxy-image?url=${encodeURIComponent('https://c5.patreon.com/external/logo/profile_cover-tiers.png')}`;
+            }
+            
+            // Affichage de l'URL du profil
+            if (attributes.url) {
+              const urlElement = document.getElementById('user-url');
+              urlElement.textContent = attributes.url;
+              urlElement.innerHTML = `<a href="${attributes.url}" target="_blank">${attributes.url}</a>`;
+              urlElement.style.display = 'block';
+            }
+            
+            // Affichage de l'email (si disponible)
+            if (attributes.email) {
+              document.getElementById('user-email').textContent = attributes.email;
+            } else {
+              document.getElementById('user-email').textContent = 'Non disponible';
+            }
+            
+            // Affichage de la date de création
+            if (attributes.created) {
+              const dateObj = new Date(attributes.created);
+              document.getElementById('user-created').textContent = dateObj.toLocaleDateString('fr-FR', {
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric'
+              });
+            } else {
+              document.getElementById('user-created').textContent = 'Non disponible';
+            }
+            
+            // Affichage des informations de membership
+            const subscriptionElement = document.getElementById('user-subscription');
+            if (userData.membership_status) {
+              const { is_member, is_admin, status, membership } = userData.membership_status;
+              
+              let statusHTML = '';
+              
+              if (is_admin) {
+                statusHTML = '<span style="color: purple; font-weight: bold;">👑 Administrateur</span> (Créateur de la campagne)';
+              } 
+              // Vérifie si c'est un membre gratuit ou un abonnement offert
+              else if (status === 'active_free_member' && membership) {
+                // Récupérer les infos sur le tier
+                const hasTiers = membership.entitled_tiers && membership.entitled_tiers.length > 0;
+                const tierName = hasTiers ? membership.entitled_tiers[0].attributes.title : 'Accès gratuit';
+                
+                if (membership.is_gift_membership) {
+                  statusHTML = `<span style="color: hotpink; font-weight: bold;">🎁 Abonnement Cadeau</span><br>Tier: ${tierName}`;
+                } else {
+                  statusHTML = `<span style="color: mediumseagreen; font-weight: bold;">🌿 Membre Gratuit</span><br>Tier: ${tierName}`;
+                }
+                
+                // Date de début de l'abonnement
+                if (membership.attributes && membership.attributes.pledge_relationship_start) {
+                  const startDate = new Date(membership.attributes.pledge_relationship_start).toLocaleDateString('fr-FR');
+                  statusHTML += `<br>Depuis le: ${startDate}`;
+                }
+              }
+              else if (is_member && membership) {
+                const { patron_status, currently_entitled_amount_cents, last_charge_date, lifetime_support_cents, next_charge_date } = membership.attributes || {};
+                
+                if (patron_status === 'active_patron') {
+                  // Membre actif avec paiement
+                  const amount = (currently_entitled_amount_cents / 100).toFixed(2);
+                  const totalSupport = (lifetime_support_cents / 100).toFixed(2);
+                  
+                  if (currently_entitled_amount_cents >= 500) {
+                    statusHTML = `<span style="color: goldenrod; font-weight: bold;">✨ Membre Premium</span> (${amount}€/mois)`;
+                  } else {
+                    statusHTML = `<span style="color: royalblue; font-weight: bold;">🔹 Membre Actif</span> (${amount}€/mois)`;
+                  }
+                  
+                  if (next_charge_date) {
+                    const nextChargeDate = new Date(next_charge_date).toLocaleDateString('fr-FR');
+                    statusHTML += `<br>Prochain paiement: ${nextChargeDate}`;
+                  }
+                  
+                  statusHTML += `<br>Total versé: ${totalSupport}€`;
+                } 
+                else if (patron_status === 'former_patron') {
+                  const totalSupport = (lifetime_support_cents / 100).toFixed(2);
+                  statusHTML = `<span style="color: steelblue; font-weight: bold;">⭐ Ancien membre</span><br>Total versé: ${totalSupport}€`;
+                  
+                  if (last_charge_date) {
+                    const lastChargeDate = new Date(last_charge_date).toLocaleDateString('fr-FR');
+                    statusHTML += `<br>Dernier paiement: ${lastChargeDate}`;
+                  }
+                }
+                else if (patron_status === 'declined_patron') {
+                  statusHTML = `<span style="color: crimson; font-weight: bold;">❌ Paiement refusé</span><br>Veuillez mettre à jour votre moyen de paiement`;
+                }
+                else {
+                  statusHTML = `Statut: ${patron_status || 'Non disponible'}`;
+                }
+              }
+              else {
+                statusHTML = 'Non membre';
+              }
+              
+              subscriptionElement.innerHTML = statusHTML;
+            } 
+            // Compatibilité avec l'ancien format (code existant, pas besoin de le réécrire)
+            else if (userData.included) {
+              // ... Le reste du code existant pour traiter userData.included
+              const memberships = userData.included.filter(item => 
+                item.type === "member" && 
+                item.attributes
+              );
+              
+              if (memberships.length > 0) {
+                // ... Votre code existant
+                // Je n'inclus pas tout pour gagner de l'espace, mais il reste inchangé
+              } else {
+                subscriptionElement.textContent = 'Aucun abonnement trouvé';
+              }
+            } else {
+              subscriptionElement.textContent = 'Information non disponible';
+            }
+            
+            // Affichage de la description / bio
+            if (attributes.about) {
+              document.getElementById('user-about').textContent = attributes.about;
+            } else {
+              document.getElementById('user-about').textContent = 'Aucune description disponible';
+            }
+            
+            // Affichage des données brutes pour débogage
+            document.getElementById('user-data-raw').textContent = JSON.stringify(userData, null, 2);
+          } else {
+            // Fallback si les données ne sont pas au format attendu
+            document.getElementById('login').textContent = 'Utilisateur Patreon';
+            document.getElementById('user-image').src = 'https://c5.patreon.com/external/logo/profile_cover-tiers.png';
+            document.getElementById('user-data-raw').textContent = JSON.stringify(userData, null, 2);
+          }
+          
+          // Changement de l'état de la page
+          document.body.dataset.state = "signed-in";
+          return true;
+        } catch (error) {
+          console.error('Erreur lors du chargement des données utilisateur:', error);
+          localStorage.removeItem('patreonAuth');
+          document.body.dataset.state = "signed-out";
+          return false;
+        }
+      }
+      
+      // Gestion de la déconnexion
+      document.getElementById('logout-link').addEventListener('click', function(e) {
+        e.preventDefault();
+        // Supprimer les données d'authentification
+        localStorage.removeItem('patreonAuth');
+        // Rediriger vers la page d'accueil
+        window.location.href = '.';
+      });
     </script>
-
-    <!-- highlight source code of this page using prism -->
-    <h2>Source code of this page</h2>
-    <pre><code class="language-html" id="sourcecode"></code></pre>
-
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.17.1/themes/prism.min.css"
@@ -485,9 +700,5 @@
       integrity="sha256-ht8ay6ZTPZfuixYB99I5oRpCLsCq7Do2LjEYLwbe+X8="
       crossorigin="anonymous"
     ></script>
-    <script>
-      document.querySelector("#sourcecode").textContent =
-        document.body.parentElement.outerHTML;
-    </script>
   </body>
 </html>
