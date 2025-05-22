@@ -165,6 +165,7 @@
         <div class="profile-details">
           <p><strong>Email:</strong> <span id="user-email"></span></p>
           <p><strong>Créé le:</strong> <span id="user-created"></span></p>
+          <p><strong>Abonnement:</strong> <span id="user-subscription"></span></p>
           <p><strong>Description:</strong> <span id="user-about"></span></p>
         </div>
         <div class="raw-data">
@@ -270,6 +271,173 @@
               });
             } else {
               document.getElementById('user-created').textContent = 'Non disponible';
+            }
+            
+            // Affichage des informations de membership
+            const subscriptionElement = document.getElementById('user-subscription');
+            if (userData.membership_status) {
+              const { is_member, is_admin, status, membership } = userData.membership_status;
+              
+              let statusHTML = '';
+              
+              if (is_admin) {
+                statusHTML = '<span style="color: purple; font-weight: bold;">👑 Administrateur</span> (Créateur de la campagne)';
+              } 
+              // Vérifie si c'est un membre gratuit ou un abonnement offert
+              else if (status === 'active_free_member' && membership) {
+                // Récupérer les infos sur le tier
+                const hasTiers = membership.entitled_tiers && membership.entitled_tiers.length > 0;
+                const tierName = hasTiers ? membership.entitled_tiers[0].attributes.title : 'Accès gratuit';
+                
+                if (membership.is_gift_membership) {
+                  statusHTML = `<span style="color: hotpink; font-weight: bold;">🎁 Abonnement Cadeau</span><br>Tier: ${tierName}`;
+                } else {
+                  statusHTML = `<span style="color: mediumseagreen; font-weight: bold;">🌿 Membre Gratuit</span><br>Tier: ${tierName}`;
+                }
+                
+                // Date de début de l'abonnement
+                if (membership.attributes && membership.attributes.pledge_relationship_start) {
+                  const startDate = new Date(membership.attributes.pledge_relationship_start).toLocaleDateString('fr-FR');
+                  statusHTML += `<br>Depuis le: ${startDate}`;
+                }
+              }
+              else if (is_member && membership) {
+                const { patron_status, currently_entitled_amount_cents, last_charge_date, lifetime_support_cents, next_charge_date } = membership.attributes || {};
+                
+                if (patron_status === 'active_patron') {
+                  // Membre actif avec paiement
+                  const amount = (currently_entitled_amount_cents / 100).toFixed(2);
+                  const totalSupport = (lifetime_support_cents / 100).toFixed(2);
+                  
+                  if (currently_entitled_amount_cents >= 500) {
+                    statusHTML = `<span style="color: goldenrod; font-weight: bold;">✨ Membre Premium</span> (${amount}€/mois)`;
+                  } else {
+                    statusHTML = `<span style="color: royalblue; font-weight: bold;">🔹 Membre Actif</span> (${amount}€/mois)`;
+                  }
+                  
+                  if (next_charge_date) {
+                    const nextChargeDate = new Date(next_charge_date).toLocaleDateString('fr-FR');
+                    statusHTML += `<br>Prochain paiement: ${nextChargeDate}`;
+                  }
+                  
+                  statusHTML += `<br>Total versé: ${totalSupport}€`;
+                } 
+                else if (patron_status === 'former_patron') {
+                  const totalSupport = (lifetime_support_cents / 100).toFixed(2);
+                  statusHTML = `<span style="color: steelblue; font-weight: bold;">⭐ Ancien membre</span><br>Total versé: ${totalSupport}€`;
+                  
+                  if (last_charge_date) {
+                    const lastChargeDate = new Date(last_charge_date).toLocaleDateString('fr-FR');
+                    statusHTML += `<br>Dernier paiement: ${lastChargeDate}`;
+                  }
+                }
+                else if (patron_status === 'declined_patron') {
+                  statusHTML = `<span style="color: crimson; font-weight: bold;">❌ Paiement refusé</span><br>Veuillez mettre à jour votre moyen de paiement`;
+                }
+                else {
+                  statusHTML = `Statut: ${patron_status || 'Non disponible'}`;
+                }
+              }
+              else {
+                statusHTML = 'Non membre';
+              }
+              
+              subscriptionElement.innerHTML = statusHTML;
+            } 
+            // Compatibilité avec l'ancien format
+            else if (userData.included) {
+              // Rechercher les adhésions correspondant à notre campagne
+              const memberships = userData.included.filter(item => 
+                item.type === "member" && 
+                item.attributes
+              );
+              
+              if (memberships.length > 0) {
+                const membership = memberships[0];
+                const { 
+                  patron_status, 
+                  currently_entitled_amount_cents, 
+                  last_charge_date, 
+                  lifetime_support_cents,
+                  is_free_trial,
+                  pledge_relationship_start
+                } = membership.attributes || {};
+                
+                // Vérifier si c'est un membre gratuit
+                const isFreeMember = patron_status === 'active_patron' && 
+                                    (currently_entitled_amount_cents === 0 || !currently_entitled_amount_cents);
+                
+                // Rechercher les tiers auxquels le membre a accès
+                const tierIds = membership.relationships && 
+                                membership.relationships.currently_entitled_tiers && 
+                                membership.relationships.currently_entitled_tiers.data || [];
+                
+                // Chercher les détails des tiers dans les données incluses
+                const tiers = tierIds.length > 0 ? 
+                             userData.included.filter(item => 
+                               item.type === "tier" && 
+                               tierIds.some(tierId => tierId.id === item.id)
+                             ) : [];
+                
+                let statusHTML = '';
+                
+                if (isFreeMember) {
+                  // C'est un membre gratuit ou un abonnement offert
+                  const tierName = tiers.length > 0 ? tiers[0].attributes.title : 'Accès gratuit';
+                  
+                  // Détecter si c'est un cadeau (pas de méthode fiable dans l'ancien format, on vérifie des indices)
+                  const isGift = tiers.length > 0 && tierName.toLowerCase().includes('cadeau');
+                  
+                  if (isGift) {
+                    statusHTML = `<span style="color: hotpink; font-weight: bold;">🎁 Abonnement Cadeau</span><br>Tier: ${tierName}`;
+                  } else {
+                    statusHTML = `<span style="color: mediumseagreen; font-weight: bold;">🌿 Membre Gratuit</span><br>Tier: ${tierName}`;
+                  }
+                  
+                  if (pledge_relationship_start) {
+                    const startDate = new Date(pledge_relationship_start).toLocaleDateString('fr-FR');
+                    statusHTML += `<br>Depuis le: ${startDate}`;
+                  }
+                }
+                else if (patron_status === 'active_patron') {
+                  const amount = currently_entitled_amount_cents ? (currently_entitled_amount_cents / 100).toFixed(2) + '€/mois' : 'Montant non disponible';
+                  const tierInfo = tiers.length > 0 ? `<br>Tier: ${tiers[0].attributes.title}` : '';
+                  
+                  if (currently_entitled_amount_cents >= 500) {
+                    statusHTML = `<span style="color: goldenrod; font-weight: bold;">✨ Membre Premium</span> (${amount})${tierInfo}`;
+                  } else {
+                    statusHTML = `<span style="color: royalblue; font-weight: bold;">🔹 Membre Actif</span> (${amount})${tierInfo}`;
+                  }
+                  
+                  if (lifetime_support_cents) {
+                    statusHTML += `<br>Total versé: ${(lifetime_support_cents / 100).toFixed(2)}€`;
+                  }
+                } 
+                else if (patron_status === 'former_patron') {
+                  statusHTML = `<span style="color: steelblue; font-weight: bold;">⭐ Ancien membre</span>`;
+                  
+                  if (lifetime_support_cents) {
+                    statusHTML += `<br>Total versé: ${(lifetime_support_cents / 100).toFixed(2)}€`;
+                  }
+                  
+                  if (last_charge_date) {
+                    const lastChargeDate = new Date(last_charge_date).toLocaleDateString('fr-FR');
+                    statusHTML += `<br>Dernier paiement: ${lastChargeDate}`;
+                  }
+                }
+                else if (patron_status === 'declined_patron') {
+                  statusHTML = `<span style="color: crimson; font-weight: bold;">❌ Paiement refusé</span><br>Veuillez mettre à jour votre moyen de paiement`;
+                }
+                else {
+                  statusHTML = `Statut: ${patron_status || 'Non disponible'}`;
+                }
+                
+                subscriptionElement.innerHTML = statusHTML;
+              } else {
+                subscriptionElement.textContent = 'Aucun abonnement trouvé';
+              }
+            } else {
+              subscriptionElement.textContent = 'Information non disponible';
             }
             
             // Affichage de la description / bio

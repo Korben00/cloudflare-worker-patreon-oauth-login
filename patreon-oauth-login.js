@@ -48,9 +48,9 @@ async function handle(request) {
       const response = await fetch(
         `https://www.patreon.com/api/oauth2/v2/identity?` + 
         `include=memberships,memberships.campaign,memberships.currently_entitled_tiers,campaign.benefits` + 
-        `&fields[user]=about,created,email,full_name,image_url,url,is_email_verified` + 
-        `&fields[member]=patron_status,is_follower,last_charge_date,last_charge_status,lifetime_support_cents,currently_entitled_amount_cents,pledge_relationship_start,campaign_lifetime_support_cents,pledge_cadence,is_free_trial,will_pay_amount_cents,next_charge_date,note,pledge_cadence,pledge_relationship_start,will_pay_amount_cents` + 
-        `&fields[campaign]=creation_name,is_monthly,one_liner,patron_count,pay_per_name,pledge_url` + 
+        `&fields[user]=about,created,email,full_name,image_url,url,is_email_verified,vanity,thumb_url` + 
+        `&fields[member]=patron_status,is_follower,last_charge_date,last_charge_status,lifetime_support_cents,currently_entitled_amount_cents,pledge_relationship_start,campaign_lifetime_support_cents,pledge_cadence,is_free_trial,will_pay_amount_cents,next_charge_date,note` + 
+        `&fields[campaign]=creation_name,is_monthly,one_liner,patron_count,pay_per_name,pledge_url,summary` + 
         `&fields[tier]=amount_cents,description,discord_role_ids,edited_at,image_url,patron_count,published,published_at,requires_shipping,title,url`, 
         {
           headers: {
