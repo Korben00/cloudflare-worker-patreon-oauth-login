@@ -5,49 +5,183 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
     <title>
-      Login with GitHub – A Cloudflare Worker + GitHub Pages Login Example
+      Connexion avec Patreon – Un exemple d'authentification avec Cloudflare Worker
     </title>
     <style>
       * {
-        font-family: Consolas, Monaco, "Andale Mono", "Ubuntu Mono", monospace;
+        font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
+        box-sizing: border-box;
+      }
+      body {
         text-align: center;
+        background-color: #f9f9f9;
+        color: #333;
+        line-height: 1.6;
+      }
+      h1 {
+        color: #4a4a4a;
       }
       h1 small {
         display: block;
         font-size: 1rem;
+        color: #777;
+        margin-top: 0.5rem;
       }
       h2 {
-        margin-top: 10rem;
+        margin-top: 3rem;
+        color: #4a4a4a;
       }
       p {
         display: none;
       }
+      a {
+        color: #ff424d;
+        text-decoration: none;
+        transition: color 0.2s;
+      }
+      a:hover {
+        color: #ff7882;
+      }
+      #signed-out a {
+        display: inline-block;
+        background-color: #ff424d;
+        color: white;
+        padding: 12px 24px;
+        border-radius: 4px;
+        font-weight: bold;
+        transition: background-color 0.2s;
+      }
+      #signed-out a:hover {
+        background-color: #e5323d;
+      }
+      .user-profile {
+        max-width: 800px;
+        margin: 2rem auto;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        padding: 0;
+        overflow: hidden;
+        display: none;
+      }
+      .profile-container {
+        padding: 1.5rem;
+      }
+      .profile-header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 1.5rem;
+      }
+      #user-image {
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 3px solid #ff424d;
+      }
+      .user-info {
+        margin-left: 1.5rem;
+        text-align: left;
+      }
+      .user-info h3 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.8rem;
+        color: #333;
+      }
+      .user-info p {
+        margin: 0;
+        color: #777;
+      }
+      .profile-details {
+        text-align: left;
+        margin-bottom: 1.5rem;
+      }
+      .profile-details p {
+        margin: 0.7rem 0;
+        display: block;
+      }
+      .raw-data {
+        margin-top: 2rem;
+        border-top: 1px solid #eee;
+        padding-top: 1.5rem;
+      }
+      .raw-data summary {
+        cursor: pointer;
+        color: #777;
+        font-size: 0.9rem;
+        text-align: left;
+        padding: 0.5rem 0;
+      }
+      #user-data-raw {
+        background: #f5f5f5;
+        padding: 1rem;
+        border-radius: 4px;
+        overflow: auto;
+        max-height: 300px;
+        text-align: left;
+        font-family: monospace;
+        font-size: 0.85rem;
+        white-space: pre-wrap;
+      }
+      .logout {
+        margin-top: 1.5rem;
+        display: block !important;
+        text-align: right;
+      }
       [data-state="signed-out"] #signed-out,
-      [data-state="signed-in"] #signed-in,
+      [data-state="signed-in"] .user-profile,
       [data-state="loading"] #loading {
         display: block;
+      }
+      #loading {
+        margin-top: 2rem;
+        font-style: italic;
+        color: #777;
       }
     </style>
   </head>
   <body data-state="signed-out">
     <h1>
-      Login with GitHub
-      <small>A Cloudflare Worker + GitHub Pages Login Example</small>
+      Connexion avec Patreon
+      <small>Un exemple d'authentification avec Cloudflare Worker</small>
     </h1>
     <p id="signed-out">
-      <a href="https://github-oauth-login.gr2m.workers.dev"
-        >Login with GitHub</a
+      <a href="https://www.patreon.com/oauth2/authorize?response_type=code&client_id=QBvRQkGxZQ69NoIGaL3DWWQ_L88vJSO8qMEhhNZWML2FGDFwD8_Cis6Dg0PQ0hUp&scope=identity%20identity.memberships%20identity[email]&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Findex.html"
+        >Connexion avec Patreon</a
       >
     </p>
-    <p id="signed-in">
-      Hello there, <span id="login"></span>. (<a href=".">Logout</a>)
-    </p>
+    <div id="signed-in" class="user-profile">
+      <h2>Profil Patreon</h2>
+      <div class="profile-container">
+        <div class="profile-header">
+          <img id="user-image" src="" alt="Photo de profil" />
+          <div class="user-info">
+            <h3 id="login">Chargement...</h3>
+            <p id="user-url"></p>
+          </div>
+        </div>
+        <div class="profile-details">
+          <p><strong>Email:</strong> <span id="user-email"></span></p>
+          <p><strong>Créé le:</strong> <span id="user-created"></span></p>
+          <p><strong>Description:</strong> <span id="user-about"></span></p>
+        </div>
+        <div class="raw-data">
+          <details>
+            <summary>Données brutes</summary>
+            <pre id="user-data-raw"></pre>
+          </details>
+        </div>
+        <p class="logout"><a href=".">Déconnexion</a></p>
+      </div>
+    </div>
     <p id="loading">
       Loading...
     </p>
 
     <script>
-      const WORKER_URL = "https://github-oauth-login.gr2m.workers.dev";
+      const WORKER_URL = "https://patreon-oauth-login.korben.workers.dev";
       const code = new URL(location.href).searchParams.get("code");
       const $login = document.querySelector("#login");
 
@@ -68,8 +202,10 @@
           const response = await fetch(WORKER_URL, {
             method: "POST",
             mode: "cors",
+            credentials: "omit",
             headers: {
-              "content-type": "application/json"
+              "Content-Type": "application/json",
+              "Accept": "application/json"
             },
             body: JSON.stringify({ code })
           });
@@ -80,15 +216,79 @@
             return alert(JSON.stringify(result, null, 2));
           }
 
-          // token can now be used to send authenticated requests against https://api.github.com
-          const getUserResponse = await fetch("https://api.github.com/user", {
+          // Au lieu d'appeler directement l'API Patreon, passons par notre worker
+          // qui servira de proxy et évitera les problèmes CORS
+          const getUserResponse = await fetch(`${WORKER_URL}/identity`, {
+            method: "GET",
             headers: {
-              accept: "application/vnd.github.v3+json",
-              authorization: `token ${result.token}`
+              "Accept": "application/json",
+              "Authorization": `Bearer ${result.token}`
             }
           });
-          const { login } = await getUserResponse.json();
-          $login.textContent = login;
+          const userData = await getUserResponse.json();
+          // Patreon utilise un format JSON:API où les données sont dans data.attributes
+          console.log('Données utilisateur Patreon:', userData);
+          
+          // On vérifie que les données sont au bon format
+          if (userData.data && userData.data.attributes) {
+            const attributes = userData.data.attributes;
+            
+            // Affichage du nom complet
+            const userName = attributes.full_name || 'Utilisateur Patreon';
+            document.getElementById('login').textContent = userName;
+            
+            // Affichage de l'image de profil via notre proxy pour éviter les problèmes CORS
+            if (attributes.image_url) {
+              document.getElementById('user-image').src = `${WORKER_URL}/proxy-image?url=${encodeURIComponent(attributes.image_url)}`;
+            } else {
+              // Image par défaut
+              document.getElementById('user-image').src = `${WORKER_URL}/proxy-image?url=${encodeURIComponent('https://c5.patreon.com/external/logo/profile_cover-tiers.png')}`;
+            }
+            
+            // Affichage de l'URL du profil
+            if (attributes.url) {
+              const urlElement = document.getElementById('user-url');
+              urlElement.textContent = attributes.url;
+              urlElement.innerHTML = `<a href="${attributes.url}" target="_blank">${attributes.url}</a>`;
+              urlElement.style.display = 'block';
+            }
+            
+            // Affichage de l'email (si disponible)
+            if (attributes.email) {
+              document.getElementById('user-email').textContent = attributes.email;
+            } else {
+              document.getElementById('user-email').textContent = 'Non disponible';
+            }
+            
+            // Affichage de la date de création
+            if (attributes.created) {
+              const dateObj = new Date(attributes.created);
+              document.getElementById('user-created').textContent = dateObj.toLocaleDateString('fr-FR', {
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric'
+              });
+            } else {
+              document.getElementById('user-created').textContent = 'Non disponible';
+            }
+            
+            // Affichage de la description / bio
+            if (attributes.about) {
+              document.getElementById('user-about').textContent = attributes.about;
+            } else {
+              document.getElementById('user-about').textContent = 'Aucune description disponible';
+            }
+            
+            // Affichage des données brutes pour débogage
+            document.getElementById('user-data-raw').textContent = JSON.stringify(userData, null, 2);
+          } else {
+            // Fallback si les données ne sont pas au format attendu
+            document.getElementById('login').textContent = 'Utilisateur Patreon';
+            document.getElementById('user-image').src = 'https://c5.patreon.com/external/logo/profile_cover-tiers.png';
+            document.getElementById('user-data-raw').textContent = JSON.stringify(userData, null, 2);
+          }
+          
+          // Changement de l'état de la page
           document.body.dataset.state = "signed-in";
         } catch (error) {
           alert(error);

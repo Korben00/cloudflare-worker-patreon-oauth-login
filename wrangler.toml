@@ -1,6 +1,13 @@
-name = "github-oauth-login"
-type = "javascript"
-account_id = "f8d9cac88285c4d654ba305a92e952d6"
-workers_dev = true
-route = ""
-zone_id = ""
+name = "patreon-oauth-login"
+account_id = "0922af2247e2b2d955b4ae11314bef39"
+
+# Nouvelle configuration requise pour Wrangler v2+
+main = "patreon-oauth-login.js"
+compatibility_date = "2025-05-22"
+
+# Configuration des variables d'environnement
+[vars]
+CLIENT_ID = "QBvRQkGxZQ69NoIGaL3DWWQ_L88vJSO8qMEhhNZWML2FGDFwD8_Cis6Dg0PQ0hUp" # Remplace par ton vrai Client ID
+
+# Pour les secrets comme le CLIENT_SECRET, ne les mets pas directement ici
+# Utilise plutôt la commande wrangler secret (voir README)
